@@ -24,74 +24,29 @@ curl --retry 3 --silent --location $JVM_COMMON_BUILDPACK | tar xzm -C /tmp/jvm-c
 . /tmp/jvm-common/bin/java
 install_java_with_overlay ${BUILD_DIR}
 
-# Install Node.js if needed
-detect_and_install_nodejs ${BUILD_DIR}
-
-# Determine Leiningen version
-if [ "$(grep ":min-lein-version[[:space:]]\+\"2" $BUILD_DIR/project.clj)" != "" ]; then
-  LEIN_VERSION="2.6.1"
-  LEIN_BIN_SOURCE="$(dirname $0)/../opt/lein2"
-  if [ "$(grep :uberjar-name $BUILD_DIR/project.clj)" != "" ]; then
-      LEIN_BUILD_TASK="${LEIN_BUILD_TASK:-uberjar}"
-      LEIN_INCLUDE_IN_SLUG="${LEIN_INCLUDE_IN_SLUG:-no}"
-  elif [ "$(grep lein-npm $BUILD_DIR/project.clj)" != "" ]; then
-      LEIN_BUILD_TASK=${LEIN_BUILD_TASK:-"with-profile production do deps, compile :all"}
-  else
-      LEIN_BUILD_TASK=${LEIN_BUILD_TASK:-"with-profile production compile :all"}
-  fi
-else
-  LEIN_VERSION="1.7.1"
-  LEIN_BIN_SOURCE="$(dirname $0)/../opt/lein1"
-  LEIN_BUILD_TASK=${LEIN_BUILD_TASK:-"deps"}
-  if [ "$LEIN_DEV" = "" ]; then
-    export LEIN_NO_DEV=y
-  fi
-  RLWRAP=yes
-  warning "No :min-lein-version found in project.clj; using $LEIN_VERSION.
-You probably don't want this!"
-fi
-
 # install leiningen jar
-LEIN_JAR_URL="https://lang-jvm.s3.amazonaws.com/leiningen-$LEIN_VERSION-standalone.jar"
-LEIN_JAR_CACHE_PATH="$CACHE_DIR/leiningen-$LEIN_VERSION-standalone.jar"
-LEIN_JAR_SLUG_PATH="$BUILD_DIR/.lein/leiningen-$LEIN_VERSION-standalone.jar"
+BOOT_JAR_URL="https://github.com/boot-clj/boot/releases/download/2.6.0/boot.jar"
+BOOT_JAR_CACHE_PATH="$CACHE_DIR/boot.jar"
+BOOT_JAR_SLUG_PATH="$BUILD_DIR/.boot/boot.jar"
 
-if [ ! -r "$LEIN_JAR_CACHE_PATH" ]; then
-  echo "-----> Installing Leiningen"
-  echo "       Downloading: leiningen-$LEIN_VERSION-standalone.jar"
-  mkdir -p $(dirname $LEIN_JAR_CACHE_PATH)
-  curl --retry 3 --silent --show-error --max-time 120 -L -o "$LEIN_JAR_CACHE_PATH" $LEIN_JAR_URL
+if [ ! -r "$BOOT_JAR_CACHE_PATH" ]; then
+  echo "-----> Installing Bootingen"
+  echo "       Downloading: bootingen-$BOOT_VERSION-standalone.jar"
+  mkdir -p $(dirname $BOOT_JAR_CACHE_PATH)
+  curl --retry 3 --silent --show-error --max-time 120 -L -o "$BOOT_JAR_CACHE_PATH" $BOOT_JAR_URL
 else
-  echo "-----> Using cached Leiningen $LEIN_VERSION"
+  echo "-----> Using cached Bootingen $BOOT_VERSION"
 fi
 
-if [ "$LEIN_VERSION" = "1.7.1" ]; then
-  echo "       To use Leiningen 2.x, add this to project.clj: :min-lein-version \"2.0.0\""
-fi
+mkdir -p "$BUILD_DIR/.boot"
+cp "$BOOT_JAR_CACHE_PATH" "$BOOT_JAR_SLUG_PATH"
 
-mkdir -p "$BUILD_DIR/.lein"
-cp "$LEIN_JAR_CACHE_PATH" "$LEIN_JAR_SLUG_PATH"
-
-# install rlwrap binary on lein 1.x
-if [ "$RLWRAP" = "yes" ]; then
-  RLWRAP_BIN_URL="https://lang-jvm.s3.amazonaws.com/rlwrap-0.3.7"
-  RLWRAP_BIN_PATH=$BUILD_DIR"/.lein/bin/rlwrap"
-  echo "       Downloading: rlwrap-0.3.7"
-  mkdir -p $(dirname $RLWRAP_BIN_PATH)
-  curl --retry 3 --silent --show-error --max-time 60 -L -o $RLWRAP_BIN_PATH $RLWRAP_BIN_URL
-  chmod +x $RLWRAP_BIN_PATH
-fi
-
-# install lein script
-LEIN_BIN_PATH=$BUILD_DIR"/.lein/bin/lein"
-echo "       Writing: lein script"
-mkdir -p $(dirname $LEIN_BIN_PATH)
-cp $LEIN_BIN_SOURCE $LEIN_BIN_PATH
-sed -i s/##LEIN_VERSION##/$LEIN_VERSION/ $LEIN_BIN_PATH
-
-# create user-level profiles
-LEIN_PROFILES_SOURCE="$(dirname $0)/../opt/profiles.clj"
-cp -n $LEIN_PROFILES_SOURCE "$BUILD_DIR/.lein/profiles.clj"
+# install boot script
+BOOT_BIN_PATH=$BUILD_DIR"/.boot/bin/boot"
+echo "       Writing: boot script"
+mkdir -p $(dirname $BOOT_BIN_PATH)
+cp $BOOT_BIN_SOURCE $BOOT_BIN_PATH
+sed -i s/##BOOT_VERSION##/$BOOT_VERSION/ $BOOT_BIN_PATH
 
 # unpack existing cache
 CACHED_DIRS=".m2 node_modules"
@@ -101,7 +56,7 @@ for DIR in $CACHED_DIRS; do
   fi
 done
 
-echo "-----> Building with Leiningen"
+echo "-----> Building with Boot"
 
 # extract environment
 if [ -d "$ENV_DIR" ]; then
@@ -112,7 +67,7 @@ if [ -d "$ENV_DIR" ]; then
         done
     # otherwise default BUILD_CONFIG_WHITELIST to just private repo creds
     else
-        for e in LEIN_USERNAME LEIN_PASSWORD LEIN_PASSPHRASE; do
+        for e in BOOT_USERNAME BOOT_PASSWORD BOOT_PASSPHRASE; do
             if [ -r $ENV_DIR/$e ]; then
                 export "$e=$(cat $ENV_DIR/$e)"
             fi
@@ -123,39 +78,32 @@ fi
 # Calculate build command
 if [ "$BUILD_COMMAND" = "" ]; then
     if [ -x $BUILD_DIR/bin/build ]; then
-        echo "       Found bin/build; running it instead of default lein invocation."
+        echo "       Found bin/build; running it instead of default boot invocation."
         BUILD_COMMAND=bin/build
     else
-        BUILD_COMMAND="lein $LEIN_BUILD_TASK"
+        BUILD_COMMAND="boot $BOOT_BUILD_TASK"
     fi
 fi
 
 echo "       Running: $BUILD_COMMAND"
 
 cd $BUILD_DIR
-PATH=.lein/bin:$PATH JVM_OPTS="-Xmx600m" \
-  LEIN_JVM_OPTS="-Xmx400m -Duser.home=$BUILD_DIR" \
+PATH=.boot/bin:$PATH JVM_OPTS="-Xmx600m" \
+  BOOT_JVM_OPTS="-Xmx400m -Duser.home=$BUILD_DIR" \
   $BUILD_COMMAND 2>&1 | sed -u 's/^/       /'
 if [ "${PIPESTATUS[*]}" != "0 0" ]; then
   echo " !     Failed to build."
   exit 1
 fi
 
-# populate profile.d
-PROFILE_PATH="$BUILD_DIR/.profile.d/clojure.sh"
-mkdir -p $(dirname $PROFILE_PATH)
-echo "export LEIN_NO_DEV=\"\${LEIN_NO_DEV:-yes}\"" >> $PROFILE_PATH
-echo 'export PATH="$HOME/.heroku/nodejs/bin:$HOME/.jdk/bin:$HOME/.lein/bin:$PATH"' >> $PROFILE_PATH
-echo 'export RING_ENV="${RING_ENV:-production}"' >> $PROFILE_PATH
-
 # default Procfile
 if [ ! -r $BUILD_DIR/Procfile ]; then
-  if [ "$LEIN_VERSION" = "1.7.1" ]; then
-    echo "       No Procfile; using \"web: lein trampoline run\"."
-    echo "web: lein trampoline run" > $BUILD_DIR/Procfile
+  if [ "$BOOT_VERSION" = "1.7.1" ]; then
+    echo "       No Procfile; using \"web: boot trampoline run\"."
+    echo "web: boot trampoline run" > $BUILD_DIR/Procfile
   else
-    echo "       No Procfile; using \"web: lein with-profile production trampoline run\"."
-    echo "web: lein with-profile production trampoline run" > $BUILD_DIR/Procfile
+    echo "       No Procfile; using \"web: boot with-profile production trampoline run\"."
+    echo "web: boot with-profile production trampoline run" > $BUILD_DIR/Procfile
   fi
 fi
 
@@ -165,11 +113,7 @@ for DIR in $CACHED_DIRS; do
   cache_copy $DIR $BUILD_DIR $CACHE_DIR
 done
 
-if [ "$LEIN_INCLUDE_IN_SLUG" = "no" ]; then
-    rm "$LEIN_JAR_SLUG_PATH"
-    rm -rf $CACHED_DIRS
-fi
-
-if [ "$LEIN_VERSION" = "1.7.1" ]; then
+if [ "$BOOT_INCLUDE_IN_SLUG" = "no" ]; then
+    rm "$BOOT_JAR_SLUG_PATH"
     rm -rf $CACHED_DIRS
 fi
